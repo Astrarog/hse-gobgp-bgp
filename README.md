@@ -9,27 +9,257 @@ link "B" and traffic between ```rt1``` and ```rt3``` passed through ```rt2``` ro
 #### 1. Setup Vagrant
 Download from https://www.vagrantup.com/downloads.html and install
 #### 2. Pull repository
-```git clone https://github.com/ivanlysogor/hse-gobgp-bgp```
+```git clone https://github.com/Astrarog/hse-gobgp-bgp```
 #### 3. Setup environment
 ```
 cd hse-gobgp-bgp
 vagrant up
 ```
-#### 4. Configure virtual routers
-Configure virtual routers:
-- configure BGP policies to change route priorities
+#### 4. How virtual routers was configured
 
-Hints:
-- you can connect to you virtual routers with command ```vagrant ssh rt1```
-- GoBGP configuration documentation: https://github.com/osrg/gobgp
-- GoBGP config file located in /etc folder (/etc/gobgpd.conf)
-- GoBGP policy configuration - https://github.com/osrg/gobgp/blob/master/docs/sources/policy.md
-- Zebra interface accessible via ```telnet localhost 2601``` with password ```zebra``` and enable ```zebra```
+##### 4.1 Splitting neighbours set
 
-#### 5. Validate
-Traceroute rt3 eth3 interface IP address from rt1 eth1 interface to ensure that traffic pass through rt1/rt2 eth4 interfaces.
+<table>
+<tr>
+<th>
+<pre>
++-----+
+| rt1 |
++-----+
+</pre>
+</th>
+<th>
+<pre>
++-----+
+| rt2 |
++-----+
+</pre>
+</th>
+<th>
+<pre>
++-----+
+| rt3 |
++-----+
+</pre>
+</th>
+</tr>
+<tr>
+<td>
+<code>
+<pre>
 
-Test it for opposite direction traffic too.
+\# Neighbors to announce Prefixes
+[[defined-sets.neighbor-sets]]
+  neighbor-set-name = "rt2-la"
+  neighbor-info-list = ["10.20.0.20"]
 
-#### 5. Destroy VM
+[[defined-sets.neighbor-sets]]
+  neighbor-set-name = "rt2-rt3-lb"
+  neighbor-info-list = ["10.10.0.20", "10.10.0.30"]
+ 
+</pre>
+</code>
+</td>
+<td>
+<code>
+<pre>
+
+\# Neighbors to announce Prefixes
+[[defined-sets.neighbor-sets]]
+  neighbor-set-name = "rt1-lb"
+  neighbor-info-list = ["10.10.0.20"]
+ 
+
+[[defined-sets.neighbor-sets]]
+  neighbor-set-name = "rt1-la-rt3-lb"
+  neighbor-info-list = ["10.20.0.10", "10.10.0.30"]
+ 
+</pre>
+</code>
+</td>
+<td>
+<code>
+<pre>
+
+\# Neighbors to announce Prefixes
+[[defined-sets.neighbor-sets]]
+  neighbor-set-name = "all-neighbors-no-rt1"
+  neighbor-info-list = ["10.10.0.20"]
+ 
+[[defined-sets.neighbor-sets]] 
+  neighbor-set-name = "rt1"
+  neighbor-info-list = ["10.10.0.10"]
+ 
+</pre>
+</code>
+</td>
+</tr>
+</table>
+
+##### 4.2 Creating new export policies
+
+<table>
+<tr>
+<th>
+<pre>
++-----+
+| rt1 |
++-----+
+</pre>
+</th>
+<th>
+<pre>
++-----+
+| rt2 |
++-----+
+</pre>
+</th>
+<th>
+<pre>
++-----+
+| rt3 |
++-----+
+</pre>
+</th>
+</tr>
+<tr>
+<td>
+<code>
+<pre>
+
+\# Export Policy
+[[policy-definitions]]
+  name = "export-policy"
+  [[policy-definitions.statements]]
+    name = "export-local-net-to-la"
+    [policy-definitions.statements.conditions.match-prefix-set]
+      prefix-set = "local-net"
+    [policy-definitions.statements.conditions.match-neighbor-set]
+      neighbor-set = "rt2-la"
+    [policy-definitions.statements.actions]
+      route-disposition = "accept-route"
+
+  [[policy-definitions.statements]]
+    name = "export-local-net-to-lb"
+    [policy-definitions.statements.conditions.match-prefix-set]
+      prefix-set = "local-net"
+    [policy-definitions.statements.conditions.match-neighbor-set]
+      neighbor-set = "rt2-rt3-lb"
+    [policy-definitions.statements.actions]
+      route-disposition = "accept-route"
+	[policy-definitions.statements.actions.bgp-actions]
+	  [policy-definitions.statements.actions.bgp-actions.set-as-path-prepend]
+        as = "65010"
+        repeat-n = 3
+ 
+</pre>
+</code>
+</td>
+<td>
+<code>
+<pre>
+
+\# Prefixes to announce
+[[defined-sets.prefix-sets]]
+  prefix-set-name = "local-net"
+  [[defined-sets.prefix-sets.prefix-list]]
+    ip-prefix = "172.20.20.0/24"
+    masklength-range = "24..24"
+
+[[defined-sets.prefix-sets]]
+  prefix-set-name = "all-net"
+  [[defined-sets.prefix-sets.prefix-list]]
+    ip-prefix = "172.20.0.0/16"
+    masklength-range = "24..24"
+
+\# Export Policy
+[[policy-definitions]]
+  name = "export-policy"
+  [[policy-definitions.statements]]
+    name = "export-local-net"
+    [policy-definitions.statements.conditions.match-prefix-set]
+      prefix-set = "local-net"
+    [policy-definitions.statements.conditions.match-neighbor-set]
+      neighbor-set = "rt1-lb"
+    [policy-definitions.statements.actions]
+      route-disposition = "accept-route"
+    
+  [[policy-definitions.statements]]
+    name = "export-all"
+    [policy-definitions.statements.conditions.match-prefix-set]
+      prefix-set = "all-net"
+    [policy-definitions.statements.conditions.match-neighbor-set]
+      neighbor-set = "rt1-la-rt3-lb"
+    [policy-definitions.statements.actions]
+      route-disposition = "accept-route"
+ 
+</pre>
+</code>
+</td>
+<td>
+<code>
+<pre>
+
+\# Export Policy
+[[policy-definitions]]
+  name = "export-policy"
+  [[policy-definitions.statements]]
+    name = "export-local-net-no-rt1"
+    [policy-definitions.statements.conditions.match-prefix-set]
+      prefix-set = "local-net"
+    [policy-definitions.statements.conditions.match-neighbor-set]
+      neighbor-set = "all-neighbors-no-rt1"
+    [policy-definitions.statements.actions]
+      route-disposition = "accept-route"
+
+  [[policy-definitions.statements]]
+    name = "export-local-net-to-rt1"
+    [policy-definitions.statements.conditions.match-prefix-set]
+      prefix-set = "local-net"
+    [policy-definitions.statements.conditions.match-neighbor-set]
+      neighbor-set = "rt1"
+    [policy-definitions.statements.actions]
+      route-disposition = "accept-route"
+	[policy-definitions.statements.actions.bgp-actions]
+	  [policy-definitions.statements.actions.bgp-actions.set-as-path-prepend]
+        as = "65030"
+        repeat-n = 3
+
+</pre>
+</code>
+</td>
+</tr>
+</table>
+
+
+#### 5. Validate with traceroute
+
+<table>
+<tr>
+<th>
+<pre>
++-----+         +-----+         +-----+
+| rt1 |---> --->| rt2 |---> --->| rt3 |
++-----+         +-----+         +-----+
+</pre>
+</th>
+<th>
+<pre>
++-----+         +-----+         +-----+
+| rt3 |---> --->| rt2 |---> --->| rt1 |
++-----+         +-----+         +-----+
+</pre>
+</th>
+</tr>
+<tr>
+<td>
+<img src="img/1p3.png"  alt="rt1 pings rt3">
+</td>
+<td>
+<img src="img/3p1.png"  alt="rt3 pings rt1">
+</td>
+</tr>
+</table>
+
+#### 6. Destroy VM
 ```vagrant destroy```
